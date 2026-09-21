@@ -635,12 +635,30 @@ function showLogin(msg = '') {
   };
 }
 
+// Logo após o login, o token pode parecer "do futuro" por alguns segundos (relógios dos servidores do Supabase). Tenta de novo.
+async function carregarComRetentativa() {
+  let ultimo;
+  for (let i = 1; i <= 6; i++) {
+    try { await DB.load(); return; } catch (err) {
+      ultimo = err;
+      if (!/future|issued|iat/i.test(err.message || '')) break;
+      const m = $('#main'); if (m) m.innerHTML = `<div class="banner">Conectando ao banco de dados… tentativa ${i} de 6.</div>`;
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  }
+  throw ultimo;
+}
+
 async function boot() {
   const s = await DB.auth.session();
   if (!s) return showLogin();
   shell();
   DB.onChange(schedule);
-  try { await DB.load(); } catch (err) { $('#main').innerHTML = `<div class="banner">Não foi possível carregar os dados: ${esc(err.message)}. Confira config.js e se o schema.sql foi executado.</div>`; return; }
+  try { await carregarComRetentativa(); } catch (err) {
+    const relogio = /future|issued|iat/i.test(err.message || '');
+    $('#main').innerHTML = `<div class="banner"><span>Não foi possível carregar os dados: ${esc(err.message)}. ${relogio ? 'É uma diferença de relógio entre servidores do Supabase, normalmente passageira. Aguarde um minuto e recarregue a página.' : 'Confira config.js e se as tabelas foram criadas no Supabase.'}</span><button class="btn" onclick="location.reload()">Tentar de novo</button></div>`;
+    return;
+  }
   DB.subscribe();
   render();
 }
