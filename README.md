@@ -10,13 +10,13 @@ Hospedagem gratuita no **GitHub Pages**; banco, login e tempo real no **Supabase
 | Painel | Saldo de hoje, projeção de 30 dias, alerta de caixa negativo, cobertura em dias, encomendas em andamento, vencidos, materiais abaixo do mínimo |
 | Encomendas | Orçamento → Em produção → Entregue. Lista com cliente, peça, data do pedido, entrega prevista, total, recebido e falta receber. Sinal padrão de 50% (editável); sinal e saldo viram contas a receber; margem prevista ao lançar e lucro real ao entregar |
 | Fluxo de caixa | Projeção por semana (30/60/90/180 dias) e extrato realizado |
-| Contas a receber / pagar | Baixa e estorno, filtros, recorrência mensal, parcelamento |
+| Contas a receber / pagar | Baixa e estorno, filtros, recorrência mensal, parcelamento. Nas contas a receber: forma de pagamento (dinheiro, Pix, crédito, débito) com desconto automático da taxa do cartão |
 | Compras | Entrada de material com custo médio; gera contas a pagar |
 | Matérias-primas | Filamento (g), tinta e verniz (ml), bases e caixas (un), com estoque mínimo e registro de **perdas e falhas** |
 | Modelos | Catálogo com preço base, ficha técnica de materiais, horas de pintura, valor da hora e custo extra |
 | DRE | Mensal ou anual, por competência, com comparativo do período anterior e bloco de **reinvestimento**: você define o % do lucro líquido e vê o valor reinvestido, o lucro restante e a sugestão de destino (tráfego pago e marketing 60%, fundo de reserva/caixa 30%, melhoria operacional 10%, todos editáveis) |
 | Relatórios | Inadimplência, rentabilidade por modelo, receita por cliente, exportação CSV |
-| Cadastros | Modelos, clientes, fornecedores, matérias-primas |
+| Cadastros | Modelos, clientes, fornecedores, matérias-primas, cartões e taxas da maquininha |
 
 ## Fluxo de uma encomenda
 
@@ -73,6 +73,14 @@ O sistema fica em `https://SEU_USUARIO.github.io/laya-financeiro/`.
 ## Reinvestimento
 
 Na DRE, informe o percentual do **lucro líquido** que será reinvestido (campo em branco até você escolher). O sistema calcula o valor reinvestido e o lucro restante, e divide o reinvestimento pelas sugestões de destino. Se o período tiver prejuízo, não há valor a reinvestir. Os percentuais ficam salvos no navegador em uso.
+
+## Forma de pagamento e taxas de cartão
+
+1. Em **Cadastros → Cartões e taxas**, cadastre uma linha por maquininha + bandeira + tipo (ex.: Stone · Visa · Crédito · 3,15%).
+2. Em **Contas a receber**, informe o **valor bruto** e a forma de pagamento. No cartão, escolha a bandeira: a taxa é preenchida sozinha (pode ser ajustada) e o sistema grava o **líquido** que entra no caixa, guardando bruto e taxa.
+3. Contas antigas: clique em **Editar** (ou em **Receber**) e escolha a forma de pagamento.
+
+A taxa aplicada fica gravada na conta: mudar a taxa no cadastro depois não altera o que já foi lançado. Na DRE, as taxas entram em "Taxas de cartão/marketplace"; não lance essas taxas também em contas a pagar, senão contam duas vezes.
 
 ## Regras de cálculo
 

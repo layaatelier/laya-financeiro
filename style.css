@@ -141,3 +141,4 @@ input, select, textarea { border: 1px solid #DCCBC2; border-radius: 12px; paddin
   .row.item { grid-template-columns: 1fr 64px 84px auto; }
 }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+[hidden] { display: none !important; }

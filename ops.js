@@ -5,6 +5,24 @@ const D = () => DB.cache;
 export const byId = (t, id) => D()[t].find(x => x.id === id);
 const r2 = v => Math.round(num(v) * 100) / 100;
 
+// Valor bruto de um lançamento (antes da taxa do cartão). Contas antigas, sem taxa, usam o próprio valor.
+export const bruto = l => l.valor_bruto != null && l.valor_bruto !== '' ? num(l.valor_bruto) : num(l.valor);
+
+export const FORMAS = { dinheiro: 'Dinheiro', pix: 'Pix', credito: 'Cartão de crédito', debito: 'Cartão de débito' };
+export const cartaoLabel = c => `${c.nome}${c.bandeira ? ' · ' + c.bandeira : ''} · ${c.tipo === 'debito' ? 'Débito' : 'Crédito'}`;
+
+// Aplica a forma de pagamento a um valor bruto: guarda bruto, taxa e grava em "valor" o líquido que entra no caixa.
+export function aplicarPagamento(valorBruto, forma, cartaoId, taxaPct) {
+  const b = r2(valorBruto);
+  const cartao = ['credito', 'debito'].includes(forma) ? byId('cartoes', cartaoId) : null;
+  const pctTaxa = Math.min(100, Math.max(0, num(taxaPct)));
+  const taxa = r2(b * pctTaxa / 100);
+  return {
+    forma_pagamento: forma || null, cartao_id: cartao?.id || null, cartao_nome: cartao ? cartaoLabel(cartao) : null,
+    valor_bruto: b, taxa_pct: pctTaxa, taxa_valor: taxa, valor: r2(b - taxa),
+  };
+}
+
 /* ---------- Cálculos ---------- */
 
 export function parcelar(total, n, primeiro) {
@@ -76,10 +94,13 @@ export function dre(ini, fim) {
     const c = l.categoria || 'Sem categoria';
     desp[c] = (desp[c] || 0) + num(l.valor);
   });
+  // Taxas da maquininha descontadas nas contas a receber entram como despesa.
+  const taxas = sum(L.filter(l => l.tipo === 'receber'), l => l.taxa_valor);
+  if (taxas) desp['Taxas de cartão/marketplace'] = (desp['Taxas de cartão/marketplace'] || 0) + taxas;
   const perd = sum(D().perdas.filter(x => x.data >= ini && x.data <= fim), x => x.custo_total);
   if (perd) desp['Perdas e falhas de impressão'] = perd;
   const totDesp = sum(Object.values(desp));
-  const outras = sum(L.filter(l => l.tipo === 'receber' && !['venda', 'encomenda'].includes(l.origem) && l.categoria !== 'Saldo inicial'), l => l.valor);
+  const outras = sum(L.filter(l => l.tipo === 'receber' && !['venda', 'encomenda'].includes(l.origem) && l.categoria !== 'Saldo inicial'), bruto);
   return { bruta, desc, liq, cmv, lb, desp, totDesp, outras, res: lb - totDesp + outras, n: v.length };
 }
 
@@ -251,6 +272,9 @@ export async function seedDemo() {
   const ins = {};
   for (const [nome, unidade, minimo] of [['Filamento PLA cinza', 'g', 1500], ['Tinta acrílica', 'ml', 100], ['Verniz e primer', 'ml', 80], ['Base de acrílico', 'un', 8], ['Caixa de presente', 'un', 10]]) {
     ins[nome] = await DB.insert('materias_primas', { nome, unidade, estoque: 0, estoque_minimo: minimo, custo_unitario: 0 });
+  }
+  for (const [nome, bandeira, tipo, taxa] of [['Maquininha', 'Visa', 'credito', 3.15], ['Maquininha', 'Mastercard', 'credito', 3.15], ['Maquininha', 'Elo', 'credito', 3.79], ['Maquininha', 'Visa', 'debito', 1.37], ['Maquininha', 'Mastercard', 'debito', 1.37]]) {
+    await DB.insert('cartoes', { nome, bandeira, tipo, taxa, obs: '' });
   }
   const pessoa = nome => ({ nome, documento: '', email: '', telefone: '', cidade: '', obs: '' });
   const f1 = await DB.insert('fornecedores', pessoa('Filamentos Prime 3D'));

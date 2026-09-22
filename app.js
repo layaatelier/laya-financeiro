@@ -20,7 +20,7 @@ const NAV = [
   ['Visão geral', [['painel', 'Painel'], ['fluxo', 'Fluxo de caixa'], ['dre', 'DRE'], ['relatorios', 'Relatórios']]],
   ['Financeiro', [['receber', 'Contas a receber'], ['pagar', 'Contas a pagar']]],
   ['Operação', [['encomendas', 'Encomendas'], ['compras', 'Compras']]],
-  ['Cadastros', [['produtos', 'Modelos'], ['clientes', 'Clientes'], ['fornecedores', 'Fornecedores'], ['insumos', 'Matérias-primas']]],
+  ['Cadastros', [['produtos', 'Modelos'], ['clientes', 'Clientes'], ['fornecedores', 'Fornecedores'], ['insumos', 'Matérias-primas'], ['cartoes', 'Cartões e taxas']]],
 ];
 
 const CAT = {
@@ -206,6 +206,50 @@ VIEWS.fluxo = () => {
 
 /* ---------- Contas a receber / pagar ---------- */
 
+/* Forma de pagamento (contas a receber) */
+
+const cartoesDe = forma => D().cartoes.filter(c => c.tipo === forma).sort((a, b) => O.cartaoLabel(a).localeCompare(O.cartaoLabel(b), 'pt-BR'));
+const cartaoOpts = (forma, sel) => {
+  const cs = cartoesDe(forma);
+  return cs.length ? `<option value="">Escolha a bandeira…</option>` + cs.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(O.cartaoLabel(c))} · ${n2(c.taxa)}%</option>`).join('')
+    : `<option value="">Nenhum cartão de ${forma === 'debito' ? 'débito' : 'crédito'} cadastrado</option>`;
+};
+
+function pagFields(r = {}) {
+  const forma = r.forma_pagamento || '';
+  const card = ['credito', 'debito'].includes(forma);
+  return `<div class="grid" style="margin-top:12px">
+    ${fld({ k: 'forma_pagamento', l: 'Forma de pagamento', t: 'select', opts: [['', 'Não informada'], ...Object.entries(O.FORMAS)] }, forma)}
+    <label class="f" data-pag-card ${card ? '' : 'hidden'}><span>Cartão / bandeira</span><select name="cartao_id" ${card && cartoesDe(forma).length ? 'required' : ''}>${card ? cartaoOpts(forma, r.cartao_id) : ''}</select></label>
+    ${fld({ k: 'taxa_pct', l: 'Taxa (%)', t: 'number' }, r.taxa_pct ?? 0)}
+    <p class="hint full" data-pag-res></p></div>`;
+}
+
+// Liga os campos: forma → lista de bandeiras; bandeira → taxa; mostra taxa e líquido.
+function wirePag(m, getBruto) {
+  const f = m.querySelector('form').elements, box = m.querySelector('[data-pag-card]'), res = m.querySelector('[data-pag-res]');
+  const show = () => {
+    const b = getBruto(), p = num(f.taxa_pct.value), tx = Math.round(b * p) / 100;
+    res.textContent = b ? (p ? `Taxa: ${brl(tx)} · entra no caixa: ${brl(b - tx)}` : `Entra no caixa: ${brl(b)} (sem taxa)`) : '';
+  };
+  m.addEventListener('change', e => {
+    if (e.target.name === 'forma_pagamento') {
+      const fm = e.target.value, card = ['credito', 'debito'].includes(fm);
+      box.hidden = !card;
+      f.cartao_id.innerHTML = card ? cartaoOpts(fm) : '';
+      f.cartao_id.required = card && cartoesDe(fm).length > 0;
+      f.taxa_pct.value = 0;
+      if (card && cartoesDe(fm).length === 1) { f.cartao_id.value = cartoesDe(fm)[0].id; f.taxa_pct.value = num(cartoesDe(fm)[0].taxa); }
+    }
+    if (e.target.name === 'cartao_id') f.taxa_pct.value = num(byId('cartoes', e.target.value)?.taxa);
+    show();
+  });
+  m.addEventListener('input', show);
+  show();
+}
+
+const readPag = (fd, valorBruto) => O.aplicarPagamento(valorBruto, fd.get('forma_pagamento'), fd.get('cartao_id'), fd.get('taxa_pct'));
+
 const statusOf = l => l.data_pagamento ? ['pago', l.tipo === 'receber' ? 'Recebido' : 'Pago'] : l.vencimento < today() ? ['venc', 'Vencido'] : ['aberto', 'Em aberto'];
 
 function viewLanc(tipo) {
@@ -215,13 +259,13 @@ function viewLanc(tipo) {
   const mes = t.slice(0, 7);
   const feitoMes = sum(rows.filter(l => l.data_pagamento?.slice(0, 7) === mes && l.categoria !== 'Saldo inicial'), l => l.valor);
   rows = rows.filter(l => F.status === 'todos' || (F.status === 'abertos' && !l.data_pagamento) || (F.status === 'vencidos' && !l.data_pagamento && l.vencimento < t) || (F.status === 'pagos' && l.data_pagamento));
-  if (F.q) { const q = F.q.toLowerCase(); rows = rows.filter(l => `${l.descricao} ${l.parceiro} ${l.categoria}`.toLowerCase().includes(q)); }
+  if (F.q) { const q = F.q.toLowerCase(); rows = rows.filter(l => `${l.descricao} ${l.parceiro} ${l.categoria} ${O.FORMAS[l.forma_pagamento] || ''} ${l.cartao_nome || ''}`.toLowerCase().includes(q)); }
   rows.sort((a, b) => F.status === 'pagos' ? b.data_pagamento.localeCompare(a.data_pagamento) : a.vencimento.localeCompare(b.vencimento));
   const body = rows.map(l => {
     const s = statusOf(l);
     return tr([
-      [fmtD(l.vencimento)], [`${esc(l.descricao)}<small>${esc(l.categoria || '')}${l.parceiro ? ' · ' + esc(l.parceiro) : ''}</small>`],
-      [brl(l.valor), 'r'], [`<span class="pill ${s[0]}">${s[1]}${l.data_pagamento ? ' ' + fmtD(l.data_pagamento).slice(0, 5) : ''}</span>`],
+      [fmtD(l.vencimento)], [`${esc(l.descricao)}<small>${esc(l.categoria || '')}${l.parceiro ? ' · ' + esc(l.parceiro) : ''}${rec ? ` · ${l.forma_pagamento ? esc(l.cartao_nome || O.FORMAS[l.forma_pagamento]) : '<i>sem forma de pagamento</i>'}` : ''}</small>`],
+      [`${brl(l.valor)}${num(l.taxa_valor) > 0 ? `<small>bruto ${brl(O.bruto(l))} · taxa ${brl(l.taxa_valor)}</small>` : ''}`, 'r'], [`<span class="pill ${s[0]}">${s[1]}${l.data_pagamento ? ' ' + fmtD(l.data_pagamento).slice(0, 5) : ''}</span>`],
       [`${l.data_pagamento ? `<button class="btn sm ghost" data-act="estornar" data-id="${l.id}">Desfazer</button>` : `<button class="btn sm" data-act="baixar" data-id="${l.id}">${rec ? 'Receber' : 'Pagar'}</button>`}
         <button class="btn sm ghost" data-act="editLanc" data-id="${l.id}">Editar</button><button class="btn sm ghost danger" data-act="delLanc" data-id="${l.id}">Excluir</button>`, 'acts'],
     ]);
@@ -232,7 +276,8 @@ function viewLanc(tipo) {
   <div class="kpis">
     ${kpi('Total em aberto', brl(sum(aberto, l => l.valor)), `${aberto.length} conta(s)`)}
     ${kpi('Vencido', brl(sum(aberto.filter(l => l.vencimento < t), l => l.valor)), '', 'out')}
-    ${kpi(rec ? 'Recebido no mês' : 'Pago no mês', brl(feitoMes), '', rec ? 'in' : 'out')}
+    ${kpi(rec ? 'Recebido no mês' : 'Pago no mês', brl(feitoMes), rec ? 'líquido, já sem taxas' : '', rec ? 'in' : 'out')}
+    ${rec ? kpi('Taxas de cartão no mês', brl(sum(D().lancamentos.filter(l => l.tipo === 'receber' && l.data_pagamento?.slice(0, 7) === mes), l => l.taxa_valor)), `${D().lancamentos.filter(l => l.tipo === 'receber' && !l.forma_pagamento).length} conta(s) sem forma de pagamento`, 'out') : ''}
   </div>
   <div class="card">${tbl([['Vencimento'], ['Descrição'], ['Valor', 'r'], ['Situação'], ['', 'r']], body, 'Nenhuma conta neste filtro.')}</div>`;
 }
@@ -244,30 +289,33 @@ function lancForm(tipo, id) {
   const cats = [...new Set([...CAT[tipo], ...D().lancamentos.filter(l => l.tipo === tipo).map(l => l.categoria).filter(Boolean)])];
   const parts = (tipo === 'receber' ? D().clientes : D().fornecedores).map(x => x.nome);
   const F = [
-    { k: 'descricao', l: 'Descrição', req: 1, w: 'full' }, { k: 'valor', l: 'Valor (R$)', t: 'number', req: 1 }, { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1 },
+    { k: 'descricao', l: 'Descrição', req: 1, w: 'full' }, { k: 'valor', l: tipo === 'receber' ? 'Valor bruto (R$)' : 'Valor (R$)', t: 'number', req: 1 }, { k: 'vencimento', l: 'Vencimento', t: 'date', req: 1 },
     { k: 'categoria', l: 'Categoria', list: 'dl-c' }, { k: 'parceiro', l: tipo === 'receber' ? 'Cliente' : 'Fornecedor', list: 'dl-p' },
     { k: 'data_pagamento', l: tipo === 'receber' ? 'Recebido em (opcional)' : 'Pago em (opcional)', t: 'date' },
     ...(id ? [] : [{ k: 'repetir', l: 'Repetir por (meses)', t: 'number', step: '1' }]),
   ];
-  openModal(id ? 'Editar conta' : (tipo === 'receber' ? 'Nova conta a receber' : 'Nova conta a pagar'),
-    `<div class="grid">${F.map(f => fld(f, f.k === 'repetir' ? 1 : r[f.k] ?? '')).join('')}</div>
+  const rec = tipo === 'receber';
+  const m = openModal(id ? 'Editar conta' : (rec ? 'Nova conta a receber' : 'Nova conta a pagar'),
+    `<div class="grid">${F.map(f => fld(f, f.k === 'repetir' ? 1 : f.k === 'valor' && id ? O.bruto(r) : r[f.k] ?? '')).join('')}</div>${rec ? pagFields(r) : ''}
      <datalist id="dl-c">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist><datalist id="dl-p">${parts.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
      ${id ? '' : '<p class="hint">Use "Repetir" para lançar despesas mensais fixas (aluguel, salários) de uma vez.</p>'}`,
     async fd => {
       const o = { tipo, descricao: fd.get('descricao').trim(), valor: num(fd.get('valor')), vencimento: fd.get('vencimento'), categoria: fd.get('categoria'), parceiro: fd.get('parceiro'), data_pagamento: fd.get('data_pagamento') || null };
+      if (rec) Object.assign(o, readPag(fd, o.valor));
       if (id) return DB.update('lancamentos', id, o);
       const rep = Math.min(60, Math.max(1, Math.floor(num(fd.get('repetir'))) || 1));
       for (let i = 0; i < rep; i++) {
         await DB.insert('lancamentos', { ...o, descricao: rep > 1 ? `${o.descricao} (${i + 1}/${rep})` : o.descricao, vencimento: addMonths(o.vencimento, i), data_pagamento: i === 0 ? o.data_pagamento : null, origem: 'manual' });
       }
     });
+  if (rec) wirePag(m, () => num(m.querySelector('[name=valor]').value));
 }
 
 /* ---------- Encomendas ---------- */
 
 const STATUS_ENC = { orcamento: ['aberto', 'Orçamento'], producao: ['atencao', 'Em produção'], entregue: ['pago', 'Entregue'] };
 
-const recebidoEnc = e => sum(D().lancamentos.filter(l => l.origem === 'encomenda' && l.origem_id === e.id && l.data_pagamento), l => l.valor);
+const recebidoEnc = e => sum(D().lancamentos.filter(l => l.origem === 'encomenda' && l.origem_id === e.id && l.data_pagamento), O.bruto);
 const faltaEnc = e => Math.max(0, Math.round((num(e.preco_total) - recebidoEnc(e)) * 100) / 100);
 
 VIEWS.encomendas = () => {
@@ -504,6 +552,15 @@ const CAD = {
     heads: [['Matéria-prima'], ['Estoque', 'r'], ['Mínimo', 'r'], ['Custo unit.', 'r'], ['Valor em estoque', 'r']],
     cells: m => [[esc(m.nome)], [`${qty(m.estoque)} ${esc(m.unidade)}${num(m.estoque_minimo) > 0 && num(m.estoque) <= num(m.estoque_minimo) ? ' <span class="pill venc">baixo</span>' : ''}`, 'r'], [qty(m.estoque_minimo), 'r'], [brl(m.custo_unitario), 'r'], [brl(num(m.estoque) * num(m.custo_unitario)), 'r']],
   },
+  cartoes: {
+    t: 'cartoes', titulo: 'Cartões e taxas', sing: 'cartão', sub: 'Bandeiras aceitas na maquininha, tipo (crédito ou débito) e a taxa cobrada. A taxa é descontada automaticamente nas contas a receber.',
+    fields: [{ k: 'nome', l: 'Maquininha (ex.: Stone, InfinitePay)', req: 1 }, { k: 'bandeira', l: 'Bandeira', list: 'dl-band', req: 1 },
+      { k: 'tipo', l: 'Tipo', t: 'select', opts: [['credito', 'Crédito'], ['debito', 'Débito']] }, { k: 'taxa', l: 'Taxa da maquininha (%)', t: 'number', req: 1 },
+      { k: 'obs', l: 'Observações', t: 'textarea', w: 'full' }],
+    extraForm: '<datalist id="dl-band"><option value="Visa"><option value="Mastercard"><option value="Elo"><option value="Hipercard"><option value="American Express"><option value="Outras"></datalist>',
+    heads: [['Maquininha e bandeira'], ['Tipo'], ['Taxa', 'r'], ['Usado em', 'r']],
+    cells: c => [[`${esc(c.nome)}<small>${esc(c.bandeira || '')}</small>`], [c.tipo === 'debito' ? 'Débito' : 'Crédito'], [`${n2(c.taxa)}%`, 'r'], [`${D().lancamentos.filter(l => l.cartao_id === c.id).length} conta(s)`, 'r']],
+  },
 };
 function perdasCard() {
   const rows = [...D().perdas].sort((a, b) => b.data.localeCompare(a.data)).map(x => tr([
@@ -514,7 +571,7 @@ function perdasCard() {
 }
 Object.keys(CAD).forEach(k => {
   VIEWS[k] = () => {
-    const C = CAD[k], rows = [...D()[C.t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+    const C = CAD[k], rows = [...D()[C.t]].sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR') || String(a.bandeira || '').localeCompare(String(b.bandeira || ''), 'pt-BR') || String(a.tipo || '').localeCompare(String(b.tipo || '')));
     const extra = k === 'insumos' ? kpi('Valor total em estoque', brl(sum(rows, m => num(m.estoque) * num(m.custo_unitario)))) : '';
     return `${head(C.titulo, C.sub, `<input type="search" placeholder="Buscar" data-filter aria-label="Buscar"><button class="btn primary" data-act="cadNew" data-t="${k}">${C.art || 'Novo'} ${C.sing}</button>`)}
     ${extra ? `<div class="kpis">${extra}${kpi('Cadastrados', rows.length)}</div>` : ''}
@@ -525,7 +582,7 @@ Object.keys(CAD).forEach(k => {
 function cadForm(key, id) {
   const C = CAD[key], r = id ? byId(C.t, id) : {};
   const ficha = key === 'produtos' ? `<div class="full"><h4>Ficha técnica (materiais por peça)</h4><div data-rows>${(r.ficha || []).map(rowFicha).join('')}</div><button type="button" class="btn ghost sm" data-act="addRow" data-kind="ficha">+ Insumo</button><p class="hint">Liste o que cada peça consome: filamento em gramas, tinta e verniz em ml, base e caixa em unidades. O custo da peça = materiais + custo extra (energia, desgaste da impressora) + horas de pintura × valor da hora. Se você já retira pró-labore, deixe o valor da hora em 0 para não contar seu trabalho duas vezes.</p></div>` : '';
-  openModal(id ? `Editar ${C.sing}` : `${C.art || 'Novo'} ${C.sing}`, `<div class="grid">${C.fields.map(f => fld(f, f.k === 'ativo' ? String(r.ativo !== false) : (r[f.k] ?? (f.t === 'number' ? 0 : '')))).join('')}${ficha}</div>`, async fd => {
+  openModal(id ? `Editar ${C.sing}` : `${C.art || 'Novo'} ${C.sing}`, `<div class="grid">${C.fields.map(f => fld(f, f.k === 'ativo' ? String(r.ativo !== false) : (r[f.k] ?? (f.t === 'number' ? 0 : '')))).join('')}${ficha}</div>${C.extraForm || ''}`, async fd => {
     const o = {};
     C.fields.forEach(f => { let v = fd.get(f.k); if (f.t === 'number') v = num(v); if (f.k === 'ativo') v = v === 'true'; o[f.k] = typeof v === 'string' ? v.trim() : v; });
     if (key === 'produtos') {
@@ -545,8 +602,10 @@ const ACT = {
   editLanc: id => lancForm(byId('lancamentos', id).tipo, id),
   delLanc: async id => { if (confirm('Excluir esta conta?')) await DB.remove('lancamentos', id); },
   baixar: id => {
-    const l = byId('lancamentos', id);
-    openModal(l.tipo === 'receber' ? 'Registrar recebimento' : 'Registrar pagamento', `<p>${esc(l.descricao)} · <b>${brl(l.valor)}</b></p>${fld({ k: 'd', l: 'Data', t: 'date', req: 1 }, today())}`, fd => DB.update('lancamentos', id, { data_pagamento: fd.get('d') }));
+    const l = byId('lancamentos', id), rec = l.tipo === 'receber', b = O.bruto(l);
+    const m = openModal(rec ? 'Registrar recebimento' : 'Registrar pagamento', `<p>${esc(l.descricao)} · <b>${brl(rec ? b : l.valor)}</b></p>${fld({ k: 'd', l: 'Data', t: 'date', req: 1 }, today())}${rec ? pagFields(l) : ''}`,
+      fd => DB.update('lancamentos', id, { data_pagamento: fd.get('d'), ...(rec ? readPag(fd, b) : {}) }));
+    if (rec) wirePag(m, () => b);
   },
   estornar: async id => { await DB.update('lancamentos', id, { data_pagamento: null }); },
   newEnc: encForm, newCompra: compraForm, newPerda: (id) => perdaForm(id),
@@ -557,7 +616,7 @@ const ACT = {
   delCompra: async id => { if (confirm('Estornar a compra? O estoque diminui e as contas a pagar vinculadas são removidas.')) { await O.estornarCompra(id); toast('Compra estornada.'); } },
   cadNew: (_, t) => cadForm(t),
   cadEdit: (id, t) => cadForm(t, id),
-  cadDel: async (id, t) => { if (confirm('Excluir este cadastro?')) await DB.remove(CAD[t].t, id); },
+  cadDel: async (id, t) => { if (confirm(t === 'cartoes' ? 'Excluir este cartão? As contas já lançadas mantêm a taxa que foi descontada.' : 'Excluir este cadastro?')) await DB.remove(CAD[t].t, id); },
   addRow: (_, __, b) => { b.closest('.body').querySelector('[data-rows]').insertAdjacentHTML('beforeend', rowBuilders[b.dataset.kind]()); },
   rmRow: (_, __, b) => b.closest('[data-row]').remove(),
   seed: async () => { await O.seedDemo(); toast('Dados de exemplo carregados.'); },
@@ -566,7 +625,7 @@ const ACT = {
   csv: (_, t) => {
     const L = D();
     const M = {
-      lancamentos: [['Tipo', 'Descrição', 'Categoria', 'Parceiro', 'Valor', 'Vencimento', 'Pagamento'], L.lancamentos.map(l => [l.tipo, l.descricao, l.categoria, l.parceiro, n2(l.valor), l.vencimento, l.data_pagamento || ''])],
+      lancamentos: [['Tipo', 'Descrição', 'Categoria', 'Parceiro', 'Valor bruto', 'Taxa', 'Valor líquido', 'Forma de pagamento', 'Cartão', 'Vencimento', 'Pagamento'], L.lancamentos.map(l => [l.tipo, l.descricao, l.categoria, l.parceiro, n2(O.bruto(l)), n2(l.taxa_valor), n2(l.valor), O.FORMAS[l.forma_pagamento] || '', l.cartao_nome || '', l.vencimento, l.data_pagamento || ''])],
       vendas: [['Data', 'Cliente', 'Itens', 'Desconto', 'Total', 'Custo', 'Pagamento'], L.vendas.map(v => [v.data, v.cliente_nome, (v.itens || []).map(i => `${i.qtd}x ${i.nome}`).join(' | '), n2(v.desconto), n2(v.total), n2(v.custo_total), v.forma_pagamento])],
       produtos: [['Produto', 'SKU', 'Preço', 'Custo', 'Estoque', 'Mínimo'], L.produtos.map(p => [p.nome, p.sku, n2(p.preco), n2(p.custo), n2(p.estoque), n2(p.estoque_minimo)])],
       clientes: [['Nome', 'Documento', 'Telefone', 'E-mail', 'Cidade'], L.clientes.map(c => [c.nome, c.documento, c.telefone, c.email, c.cidade])],

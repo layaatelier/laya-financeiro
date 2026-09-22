@@ -1,6 +1,8 @@
 import { CONFIG } from './config.js';
 
-export const TABLES = ['clientes', 'fornecedores', 'materias_primas', 'produtos', 'vendas', 'compras', 'lancamentos', 'encomendas', 'perdas'];
+export const TABLES = ['clientes', 'fornecedores', 'materias_primas', 'produtos', 'vendas', 'compras', 'lancamentos', 'encomendas', 'perdas', 'cartoes'];
+// Tabelas novas: se ainda não foram criadas no Supabase, o sistema abre mesmo assim (lista vazia).
+const OPCIONAIS = ['cartoes'];
 export const cache = Object.fromEntries(TABLES.map(t => [t, []]));
 export const isCloud = Boolean(CONFIG.SUPABASE_URL && CONFIG.SUPABASE_ANON_KEY && globalThis.window?.supabase);
 const sb = isCloud ? window.supabase.createClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY) : null;
@@ -23,6 +25,7 @@ export async function load() {
   if (isCloud) {
     await Promise.all(TABLES.map(async t => {
       const { data, error } = await sb.from(t).select('*').order('created_at', { ascending: false }).limit(5000);
+      if (error && OPCIONAIS.includes(t)) { console.warn(`Tabela ${t} indisponível: ${error.message}`); cache[t] = []; return; }
       if (error) throw error;
       cache[t] = data;
     }));
