@@ -142,3 +142,4 @@ input, select, textarea { border: 1px solid #DCCBC2; border-radius: 12px; paddin
 }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
 [hidden] { display: none !important; }
+tr.total td:first-child { text-align: left; }

@@ -11,6 +11,7 @@ const state = {
   dre: { mode: 'mes', val: today().slice(0, 7) },
   f: { receber: { status: 'abertos', q: '' }, pagar: { status: 'abertos', q: '' } },
   enc: { status: 'andamento' },
+  rel: { mes: today().slice(0, 7) },
   reinv: (() => { try { return JSON.parse(localStorage.getItem('laya:reinvest')) || null; } catch { return null; } })() || { pct: '', split: { trafego: 60, reserva: 30, melhoria: 10 } },
 };
 const VIEWS = {};
@@ -495,6 +496,31 @@ function reinvCard(res) {
 
 /* ---------- Relatórios ---------- */
 
+// Recebimentos do mês (pela data do recebimento), agrupados por forma de pagamento e por cartão/bandeira.
+function recebPorForma(mes) {
+  const L = D().lancamentos.filter(l => l.tipo === 'receber' && l.categoria !== 'Saldo inicial' && l.data_pagamento?.slice(0, 7) === mes);
+  const add = (o, k, l) => { const a = o[k] || (o[k] = { n: 0, b: 0, t: 0, v: 0 }); a.n++; a.b += O.bruto(l); a.t += num(l.taxa_valor); a.v += num(l.valor); };
+  const formas = {}, cartoes = {};
+  L.forEach(l => {
+    add(formas, O.FORMAS[l.forma_pagamento] || 'Não informada', l);
+    if (['credito', 'debito'].includes(l.forma_pagamento)) add(cartoes, l.cartao_nome || `${O.FORMAS[l.forma_pagamento]} (sem bandeira)`, l);
+  });
+  const ord = o => Object.entries(o).sort((a, b) => b[1].b - a[1].b);
+  return { formas: ord(formas), cartoes: ord(cartoes), tot: { n: L.length, b: sum(L, O.bruto), t: sum(L, l => l.taxa_valor), v: sum(L, l => l.valor) } };
+}
+
+function formaCard() {
+  const mes = state.rel.mes, R = recebPorForma(mes), T = R.tot;
+  const linha = ([k, a]) => tr([[esc(k)], [a.n, 'r'], [brl(a.b), 'r'], [T.b ? pct(a.b / T.b) : '—', 'r'], [brl(a.t), `r ${a.t ? 'out' : ''}`], [a.b ? pct(a.t / a.b) : '—', 'r'], [brl(a.v), 'r in']]);
+  const heads = [['Forma'], ['Qtd', 'r'], ['Bruto', 'r'], ['% do total', 'r'], ['Taxa', 'r'], ['Taxa média', 'r'], ['Líquido', 'r']];
+  const total = tr([['Total'], [T.n, 'r'], [brl(T.b), 'r'], [T.b ? '100%' : '—', 'r'], [brl(T.t), 'r'], [T.b ? pct(T.t / T.b) : '—', 'r'], [brl(T.v), 'r']], 'total');
+  return `<div class="card"><div class="head" style="margin-bottom:10px"><div><h3>Recebimentos por forma de pagamento</h3><p class="hint" style="margin:0">Pela data do recebimento. Saldo inicial fica fora.</p></div>
+    <div class="tools"><input type="month" value="${mes}" data-state="rel.mes" aria-label="Mês"><button class="btn" data-act="csv" data-t="formas">Exportar</button></div></div>
+    <div class="kpis">${kpi('Recebido bruto', brl(T.b), `${T.n} recebimento(s)`)}${kpi('Taxas de cartão', brl(T.t), T.b ? `${pct(T.t / T.b)} do bruto` : '', T.t ? 'out' : '')}${kpi('Entrou no caixa', brl(T.v), 'líquido', 'in')}</div>
+    ${tbl(heads, R.formas.length ? [...R.formas.map(linha), total] : [], 'Nenhum recebimento neste mês.')}
+    ${R.cartoes.length ? `<h3 style="font-size:17px;margin-top:16px">Cartões por bandeira</h3>${tbl([['Cartão / bandeira'], ...heads.slice(1)], R.cartoes.map(linha))}` : ''}</div>`;
+}
+
 VIEWS.relatorios = () => {
   const t = today(), L = D().lancamentos;
   const inad = {};
@@ -511,6 +537,7 @@ VIEWS.relatorios = () => {
   const days = d => Math.floor((new Date(t) - new Date(d)) / 864e5);
   return `${head('Relatórios', 'Análises prontas e exportação para Excel (CSV).', `<button class="btn" data-act="csv" data-t="lancamentos">Exportar lançamentos</button><button class="btn" data-act="csv" data-t="vendas">Exportar vendas</button><button class="btn" data-act="csv" data-t="produtos">Exportar produtos</button><button class="btn" data-act="csv" data-t="clientes">Exportar clientes</button><button class="btn" data-act="csv" data-t="insumos">Exportar estoque</button>`)}
   <div class="stack">
+  ${formaCard()}
   <div class="grid2">
     <div class="card"><h3>Inadimplência por cliente</h3>${tbl([['Cliente'], ['Parcelas', 'r'], ['Valor', 'r'], ['Atraso', 'r']], Object.entries(inad).sort((a, b) => b[1].v - a[1].v).map(([k, a]) => tr([[esc(k)], [a.n, 'r'], [brl(a.v), 'r out'], [`${days(a.min)} dias`, 'r']])), 'Nenhum recebimento vencido.')}</div>
     <div class="card"><h3>Contas a pagar em aberto por categoria</h3>${tbl([['Categoria'], ['Valor', 'r']], Object.entries(cat).sort((a, b) => b[1] - a[1]).map(([k, v]) => tr([[esc(k)], [brl(v), 'r']])), 'Nenhuma conta a pagar em aberto.')}</div>
@@ -629,9 +656,13 @@ const ACT = {
       vendas: [['Data', 'Cliente', 'Itens', 'Desconto', 'Total', 'Custo', 'Pagamento'], L.vendas.map(v => [v.data, v.cliente_nome, (v.itens || []).map(i => `${i.qtd}x ${i.nome}`).join(' | '), n2(v.desconto), n2(v.total), n2(v.custo_total), v.forma_pagamento])],
       produtos: [['Produto', 'SKU', 'Preço', 'Custo', 'Estoque', 'Mínimo'], L.produtos.map(p => [p.nome, p.sku, n2(p.preco), n2(p.custo), n2(p.estoque), n2(p.estoque_minimo)])],
       clientes: [['Nome', 'Documento', 'Telefone', 'E-mail', 'Cidade'], L.clientes.map(c => [c.nome, c.documento, c.telefone, c.email, c.cidade])],
+      formas: (() => {
+        const R = recebPorForma(state.rel.mes), row = (tipo, [k, a]) => [tipo, k, a.n, n2(a.b), n2(a.t), n2(a.v)];
+        return [['Agrupamento', 'Forma / cartão', 'Quantidade', 'Bruto', 'Taxa', 'Líquido'], [...R.formas.map(x => row('Forma de pagamento', x)), ...R.cartoes.map(x => row('Cartão', x))]];
+      })(),
       insumos: [['Matéria-prima', 'Unidade', 'Estoque', 'Mínimo', 'Custo unitário'], L.materias_primas.map(m => [m.nome, m.unidade, n2(m.estoque), n2(m.estoque_minimo), n2(m.custo_unitario)])],
     };
-    csv(t, ...M[t]);
+    csv(t === 'formas' ? `recebimentos-por-forma-${state.rel.mes}` : t, ...M[t]);
   },
 };
 
