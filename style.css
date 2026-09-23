@@ -143,3 +143,5 @@ input, select, textarea { border: 1px solid #DCCBC2; border-radius: 12px; paddin
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
 [hidden] { display: none !important; }
 tr.total td:first-child { text-align: left; }
+fieldset.pag { border: 0; padding: 0; margin: 0; min-width: 0; }
+fieldset.pag legend { font-weight: 600; font-size: 14px; margin-top: 14px; padding: 0; }

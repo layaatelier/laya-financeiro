@@ -185,7 +185,8 @@ export async function salvarEncomenda(o) {
   });
   const nome = `${p.nome}${q > 1 ? ` ×${q}` : ''} · ${cli.nome}`;
   if (sinal > 0) {
-    await DB.insert('lancamentos', { tipo: 'receber', descricao: `Sinal · ${nome}`, categoria: 'Sinal de encomenda', valor: sinal, vencimento: o.data_pedido, data_pagamento: o.sinal_recebido ? o.data_pedido : null, parceiro: cli.nome, origem: 'encomenda', origem_id: enc.id });
+    await DB.insert('lancamentos', { tipo: 'receber', descricao: `Sinal · ${nome}`, categoria: 'Sinal de encomenda', valor: sinal, vencimento: o.data_pedido, data_pagamento: o.sinal_recebido ? o.data_pedido : null, parceiro: cli.nome, origem: 'encomenda', origem_id: enc.id,
+      ...(o.sinal_recebido && o.pag?.forma ? aplicarPagamento(sinal, o.pag.forma, o.pag.cartao_id, o.pag.taxa_pct) : {}) });
   }
   if (preco - sinal > 0.004) {
     await DB.insert('lancamentos', { tipo: 'receber', descricao: `Saldo · ${nome}`, categoria: 'Vendas', valor: r2(preco - sinal), vencimento: o.prazo, data_pagamento: null, parceiro: cli.nome, origem: 'encomenda', origem_id: enc.id });
@@ -227,7 +228,8 @@ export async function entregarEncomenda(id, o) {
     desconto: 0, total: num(e.preco_total), custo_total, forma_pagamento: 'Encomenda', parcelas: 1, encomenda_id: id,
   });
   const saldo = D().lancamentos.find(l => l.origem === 'encomenda' && l.origem_id === id && l.categoria === 'Vendas');
-  if (saldo) await DB.update('lancamentos', saldo.id, { vencimento: o.data_entrega, data_pagamento: o.saldo_recebido ? o.data_entrega : null });
+  if (saldo) await DB.update('lancamentos', saldo.id, { vencimento: o.data_entrega, data_pagamento: o.saldo_recebido ? o.data_entrega : null,
+    ...(o.saldo_recebido && o.pag?.forma ? aplicarPagamento(bruto(saldo), o.pag.forma, o.pag.cartao_id, o.pag.taxa_pct) : {}) });
   await DB.update('encomendas', id, { status: 'entregue', data_entrega: o.data_entrega, horas_pintura: horas, valor_hora: vh, outros_custos: outros, custo_total });
 }
 

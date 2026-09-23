@@ -216,15 +216,29 @@ const cartaoOpts = (forma, sel) => {
     : `<option value="">Nenhum cartão de ${forma === 'debito' ? 'débito' : 'crédito'} cadastrado</option>`;
 };
 
-function pagFields(r = {}) {
+// obrig: a forma precisa ser escolhida (usado quando o dinheiro já está entrando).
+// alternar: nome de um checkbox do formulário que mostra/esconde os campos (ex.: "sinal recebido").
+function pagFields(r = {}, { obrig = false, alternar = '', titulo = '' } = {}) {
   const forma = r.forma_pagamento || '';
   const card = ['credito', 'debito'].includes(forma);
-  return `<div class="grid" style="margin-top:12px">
-    ${fld({ k: 'forma_pagamento', l: 'Forma de pagamento', t: 'select', opts: [['', 'Não informada'], ...Object.entries(O.FORMAS)] }, forma)}
+  return `<fieldset class="pag" ${alternar ? `data-pag-alt="${alternar}"` : ''}>${titulo ? `<legend>${titulo}</legend>` : ''}<div class="grid" style="margin-top:12px">
+    ${fld({ k: 'forma_pagamento', l: 'Forma de pagamento', t: 'select', req: obrig, opts: [['', obrig ? 'Escolha…' : 'Não informada'], ...Object.entries(O.FORMAS)] }, forma)}
     <label class="f" data-pag-card ${card ? '' : 'hidden'}><span>Cartão / bandeira</span><select name="cartao_id" ${card && cartoesDe(forma).length ? 'required' : ''}>${card ? cartaoOpts(forma, r.cartao_id) : ''}</select></label>
     ${fld({ k: 'taxa_pct', l: 'Taxa (%)', t: 'number' }, r.taxa_pct ?? 0)}
-    <p class="hint full" data-pag-res></p></div>`;
+    <p class="hint full" data-pag-res></p></div></fieldset>`;
 }
+
+// Forma de pagamento curta para listas: "Pix", "Crédito Visa"...
+const formaCurta = l => {
+  if (!l?.forma_pagamento) return '';
+  if (!['credito', 'debito'].includes(l.forma_pagamento)) return O.FORMAS[l.forma_pagamento];
+  const band = byId('cartoes', l.cartao_id)?.bandeira;
+  return `${l.forma_pagamento === 'debito' ? 'Débito' : 'Crédito'}${band ? ' ' + band : ''}`;
+};
+// Resumo das formas de pagamento de uma encomenda: "Sinal: Pix · Saldo: Crédito Visa".
+const formasEnc = id => D().lancamentos.filter(l => l.origem === 'encomenda' && l.origem_id === id)
+  .sort((a, b) => (a.categoria === 'Vendas') - (b.categoria === 'Vendas'))
+  .map(l => `${l.categoria === 'Vendas' ? 'Saldo' : 'Sinal'}: ${l.data_pagamento ? (formaCurta(l) || 'forma não informada') : 'a receber'}`).join(' · ');
 
 // Liga os campos: forma → lista de bandeiras; bandeira → taxa; mostra taxa e líquido.
 function wirePag(m, getBruto) {
@@ -246,6 +260,11 @@ function wirePag(m, getBruto) {
     show();
   });
   m.addEventListener('input', show);
+  const fs = m.querySelector('[data-pag-alt]');
+  if (fs) {
+    const chk = f[fs.dataset.pagAlt], tog = () => { fs.hidden = fs.disabled = !chk.checked; };
+    chk.addEventListener('change', tog); tog();
+  }
   show();
 }
 
@@ -336,7 +355,7 @@ VIEWS.encomendas = () => {
         [`${esc(e.cliente_nome)}<small>${esc(e.produto_nome)}${num(e.quantidade) > 1 ? ` ×${qty(e.quantidade)}` : ''}${e.descricao ? ' · ' + esc(e.descricao) : ''}</small>`],
         [fmtD(e.data_pedido)],
         [`${fmtD(e.prazo)}${atraso ? ' <span class="pill venc">atrasada</span>' : ''}${e.data_entrega ? `<small>entregue em ${fmtD(e.data_entrega)}</small>` : ''}`],
-        [`${brl(e.preco_total)}${lucro}`, 'r'], [brl(recebidoEnc(e)), 'r in'], [brl(falta), `r ${falta > 0 ? 'out' : ''}`],
+        [`${brl(e.preco_total)}${lucro}`, 'r'], [`${brl(recebidoEnc(e))}<small>${esc(formasEnc(e.id))}</small>`, 'r in'], [brl(falta), `r ${falta > 0 ? 'out' : ''}`],
         [`<span class="pill ${st[0]}">${st[1]}</span>`], [acts, 'acts'],
       ]);
     });
@@ -366,12 +385,13 @@ function encForm() {
     ${fld({ k: 'prazo', l: 'Prazo de entrega', t: 'date', req: 1 }, addDays(today(), 15))}
     ${fld({ k: 'status', l: 'Situação inicial', t: 'select', opts: [['producao', 'Em produção (usa o material agora)'], ['orcamento', 'Orçamento (ainda não produzir)']] })}
     ${fld({ k: 'sinal_recebido', l: 'Sinal já recebido', t: 'check' }, true)}
-    <p class="hint full" id="est"></p></div><datalist id="dl-cli">${D().clientes.map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>
+    <p class="hint full" id="est"></p></div>${pagFields({}, { obrig: true, alternar: 'sinal_recebido', titulo: 'Pagamento do sinal' })}<datalist id="dl-cli">${D().clientes.map(c => `<option value="${esc(c.nome)}">`).join('')}</datalist>
     <p class="hint">Cliente novo é cadastrado automaticamente. Metade no pedido e metade na entrega é o padrão; altere o sinal se combinar diferente.</p>`, async fd => {
     await O.salvarEncomenda({
       cliente_nome: fd.get('cliente_nome'), produto_id: fd.get('produto_id'), descricao: fd.get('descricao').trim(), quantidade: num(fd.get('quantidade')),
       preco_total: num(fd.get('preco_total')), sinal: num(fd.get('sinal')), data_pedido: fd.get('data_pedido'), prazo: fd.get('prazo'),
       status: fd.get('status'), sinal_recebido: fd.get('sinal_recebido') === 'on',
+      pag: { forma: fd.get('forma_pagamento'), cartao_id: fd.get('cartao_id'), taxa_pct: fd.get('taxa_pct') },
     });
     toast('Encomenda registrada.');
   }, true);
@@ -386,6 +406,7 @@ function encForm() {
     est.textContent = `Custo estimado: ${brl(custo)}${preco ? ` · margem prevista: ${pct((preco - custo) / preco)}` : ''} · falta receber na entrega: ${brl(falta)}`;
   };
   let sinalManual = false;
+  wirePag(m, () => num(m.querySelector('[name=sinal]').value));
   m.addEventListener('change', e => { if (['produto_id', 'quantidade'].includes(e.target.name)) upd(true); });
   m.addEventListener('input', e => {
     if (e.target.name === 'sinal') { sinalManual = true; upd(false); }
@@ -396,17 +417,20 @@ function encForm() {
 function entregarForm(id) {
   const e = byId('encomendas', id);
   const saldo = D().lancamentos.find(l => l.origem === 'encomenda' && l.origem_id === id && l.categoria === 'Vendas');
-  openModal('Entregar encomenda', `<p>${esc(e.cliente_nome)} · ${esc(e.produto_nome)} · <b>${brl(e.preco_total)}</b></p><div class="grid">
+  const m = openModal('Entregar encomenda', `<p>${esc(e.cliente_nome)} · ${esc(e.produto_nome)} · <b>${brl(e.preco_total)}</b></p><div class="grid">
     ${fld({ k: 'data_entrega', l: 'Data da entrega', t: 'date', req: 1 }, today())}
     ${fld({ k: 'horas_pintura', l: 'Horas de pintura (reais)', t: 'number' }, e.horas_pintura)}
     ${fld({ k: 'valor_hora', l: 'Valor da hora (R$)', t: 'number' }, e.valor_hora)}
     ${fld({ k: 'outros_custos', l: 'Outros custos (R$)', t: 'number' }, 0)}
-    ${fld({ k: 'saldo_recebido', l: `Saldo recebido na entrega${saldo ? ` (${brl(saldo.valor)})` : ''}`, t: 'check', w: 'full' }, true)}</div>
+    ${fld({ k: 'saldo_recebido', l: `Saldo recebido na entrega${saldo ? ` (${brl(O.bruto(saldo))})` : ''}`, t: 'check', w: 'full' }, saldo ? true : false)}</div>
+    ${saldo ? pagFields(saldo, { obrig: true, alternar: 'saldo_recebido', titulo: 'Pagamento do saldo' }) : ''}
     <p class="hint">Material já consumido: ${brl(sum(e.consumo || [], c => c.custo))}. Receita e custo entram na DRE na data da entrega. Se você já retira pró-labore, use valor da hora 0 para não contar seu trabalho duas vezes.</p>`,
   async fd => {
-    await O.entregarEncomenda(id, { data_entrega: fd.get('data_entrega'), horas_pintura: num(fd.get('horas_pintura')), valor_hora: num(fd.get('valor_hora')), outros_custos: num(fd.get('outros_custos')), saldo_recebido: fd.get('saldo_recebido') === 'on' });
+    await O.entregarEncomenda(id, { data_entrega: fd.get('data_entrega'), horas_pintura: num(fd.get('horas_pintura')), valor_hora: num(fd.get('valor_hora')), outros_custos: num(fd.get('outros_custos')), saldo_recebido: fd.get('saldo_recebido') === 'on',
+      pag: { forma: fd.get('forma_pagamento'), cartao_id: fd.get('cartao_id'), taxa_pct: fd.get('taxa_pct') } });
     toast('Encomenda entregue.');
   });
+  if (saldo) wirePag(m, () => O.bruto(saldo));
 }
 
 function perdaForm(mpId) {
@@ -630,7 +654,7 @@ const ACT = {
   delLanc: async id => { if (confirm('Excluir esta conta?')) await DB.remove('lancamentos', id); },
   baixar: id => {
     const l = byId('lancamentos', id), rec = l.tipo === 'receber', b = O.bruto(l);
-    const m = openModal(rec ? 'Registrar recebimento' : 'Registrar pagamento', `<p>${esc(l.descricao)} · <b>${brl(rec ? b : l.valor)}</b></p>${fld({ k: 'd', l: 'Data', t: 'date', req: 1 }, today())}${rec ? pagFields(l) : ''}`,
+    const m = openModal(rec ? 'Registrar recebimento' : 'Registrar pagamento', `<p>${esc(l.descricao)} · <b>${brl(rec ? b : l.valor)}</b></p>${fld({ k: 'd', l: 'Data', t: 'date', req: 1 }, today())}${rec ? pagFields(l, { obrig: true }) : ''}`,
       fd => DB.update('lancamentos', id, { data_pagamento: fd.get('d'), ...(rec ? readPag(fd, b) : {}) }));
     if (rec) wirePag(m, () => b);
   },
@@ -653,7 +677,7 @@ const ACT = {
     const L = D();
     const M = {
       lancamentos: [['Tipo', 'Descrição', 'Categoria', 'Parceiro', 'Valor bruto', 'Taxa', 'Valor líquido', 'Forma de pagamento', 'Cartão', 'Vencimento', 'Pagamento'], L.lancamentos.map(l => [l.tipo, l.descricao, l.categoria, l.parceiro, n2(O.bruto(l)), n2(l.taxa_valor), n2(l.valor), O.FORMAS[l.forma_pagamento] || '', l.cartao_nome || '', l.vencimento, l.data_pagamento || ''])],
-      vendas: [['Data', 'Cliente', 'Itens', 'Desconto', 'Total', 'Custo', 'Pagamento'], L.vendas.map(v => [v.data, v.cliente_nome, (v.itens || []).map(i => `${i.qtd}x ${i.nome}`).join(' | '), n2(v.desconto), n2(v.total), n2(v.custo_total), v.forma_pagamento])],
+      vendas: [['Data', 'Cliente', 'Itens', 'Desconto', 'Total', 'Custo', 'Pagamento'], L.vendas.map(v => [v.data, v.cliente_nome, (v.itens || []).map(i => `${i.qtd}x ${i.nome}`).join(' | '), n2(v.desconto), n2(v.total), n2(v.custo_total), v.encomenda_id ? formasEnc(v.encomenda_id) : v.forma_pagamento])],
       produtos: [['Produto', 'SKU', 'Preço', 'Custo', 'Estoque', 'Mínimo'], L.produtos.map(p => [p.nome, p.sku, n2(p.preco), n2(p.custo), n2(p.estoque), n2(p.estoque_minimo)])],
       clientes: [['Nome', 'Documento', 'Telefone', 'E-mail', 'Cidade'], L.clientes.map(c => [c.nome, c.documento, c.telefone, c.email, c.cidade])],
       formas: (() => {
